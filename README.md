@@ -1,5 +1,9 @@
 # dockfile · Docker 容器文件管理器
 
+[![ci](https://github.com/laohuan12138/dockfile/actions/workflows/ci.yml/badge.svg)](https://github.com/laohuan12138/dockfile/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-ffb020.svg)](LICENSE)
+[![node](https://img.shields.io/badge/node-%E2%89%A518-3c873a.svg)](package.json)
+
 在浏览器里直接浏览、上传、下载、编辑**任意容器内的文件**——包括**已停止的容器**和**没有 shell 的 distroless 镜像**。
 
 直连 Docker Engine API（不依赖 `docker` CLI），Windows 上自动桥接 **WSL 里装的 Docker**，同时支持 Docker Desktop、Linux/macOS 本机 socket 和远程 `tcp://` 引擎。
