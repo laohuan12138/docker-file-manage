@@ -1,0 +1,11 @@
+node_modules/
+.dockfile-state.json
+*.log
+
+# mock-engine 运行时生成的夹具与权限表
+tools/fixtures/
+tools/.mock-modes.json
+
+# 测试临时产物
+test/download-check.txt
+test/shots/
