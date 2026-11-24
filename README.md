@@ -243,7 +243,7 @@ npm run test:ui   # Playwright：目录浏览、预览、拖拽上传、下载�
 ```
 
 - `npm test`：59 项，覆盖 tar 读写 / PAX 长名 / 中文名 / 截断容错、目录列举、文本读写、3.4 MB 上传 sha256 校验、目录打包下载解包、429/403/401/400/404 各类错误、只读模式、token 鉴权；终端部分覆盖 shell 探测、`workdir`、输入回显、resize、并发订阅、断开回收、镜像临时容器创建与删除、无 shell 镜像报错、会话上限
-- `npm run test:live`：与 `docker ps -a`、`docker exec ls`、`docker exec cat` 逐条对拍；写操作在 `dockfile-selftest` 容器里进行，结束时删除测试目录
+- `npm run test:live`：与 `docker ps -a`、`docker exec ls`、`docker exec cat` 逐条对拍，并在真实 pty 里跑一遍终端（`pwd` / `tty` / resize）；写操作在 `dockfile-selftest` 容器里进行，结束时删除测试目录
 - `npm run test:ui`：Chromium 全流程（含终端与镜像 shell）+ 截图到 `docs/`
 
 Playwright 用的是本机已装的 Chromium（`~/AppData/Local/ms-playwright`），没有时 `npm i -D playwright-core` 即可。

@@ -96,6 +96,64 @@ test('真实引擎只读验证', async (t) => {
       assert.ok(r.data.endpoints.length > 0);
       assert.ok(r.data.endpoints.some((e) => e.ok));
     });
+
+    await t.test('终端：真实 pty 里执行命令', async () => {
+      const res = await fetch(`${base}/api/containers/${CONTAINER}/term`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cols: 100, rows: 30, workdir: '/etc' }),
+      });
+      assert.equal(res.status, 201, '开终端失败');
+      const sess = await res.json();
+      assert.ok(sess.id);
+      assert.match(sess.shell, /^\//, 'shell 探测应落到绝对路径');
+
+      const st = await fetch(`${base}${sess.stream}`);
+      assert.equal(st.status, 200);
+      const reader = st.body.getReader();
+      let buf = '';
+      const strip = (s) => s.replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, '');
+      const waitFor = async (pred, ms = 20000) => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < ms) {
+          if (pred(buf)) return buf;
+          const c = await Promise.race([
+            reader.read(),
+            new Promise((r2) => setTimeout(() => r2({ value: undefined }), 100)),
+          ]);
+          if (c.value) buf += Buffer.from(c.value).toString('utf8');
+          if (c.done) break;
+        }
+        throw new Error('终端输出超时：' + JSON.stringify(buf.slice(-300)));
+      };
+      const type = async (text) => {
+        const r2 = await fetch(`${base}/api/term/${sess.id}/input`, { method: 'POST', body: Buffer.from(text) });
+        assert.equal(r2.status, 200);
+        await r2.text();
+      };
+
+      try {
+        await waitFor((b) => /#\s*$/.test(strip(b)));
+        await type('echo LIVE-$(echo TERM)-OK\n');
+        await waitFor((b) => b.includes('LIVE-TERM-OK'), 15000);
+        await type('pwd\n');
+        await waitFor((b) => strip(b).includes('\r\n/etc'), 15000);
+        await type('tty\n');
+        await waitFor((b) => /\/dev\/pts\/\d+/.test(b), 20000);
+
+        const rs = await fetch(`${base}/api/term/${sess.id}/resize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cols: 90, rows: 26 }),
+        });
+        assert.equal(rs.status, 200);
+        await rs.text();
+      } finally {
+        await fetch(`${base}/api/term/${sess.id}/close`, { method: 'POST' }).catch(() => {});
+        try { await reader.cancel(); } catch (_) {}
+      }
+      assert.deepEqual((await j('/api/term')).data.sessions, []);
+    });
   } finally {
     await server.stop();
   }
