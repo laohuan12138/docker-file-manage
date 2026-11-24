@@ -1,4 +1,5 @@
 /* dockfile 前端：零依赖 SPA */
+import { createTermUI } from './term.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -25,6 +26,9 @@ const S = {
   uploads: [],
   endpointList: null,
 };
+
+let termUI = null;
+let imageCache = null;
 
 const MAX_RENDER = 1200;
 const TEXT_LIMIT = 2 * 1024 * 1024;
@@ -237,6 +241,7 @@ function renderContainers() {
         <div class="c-name">${esc(c.name)}</div>
         <div class="c-meta">
           ${c.compose ? `<span class="proj">${esc(c.compose)}</span>` : ''}
+          ${c.ephemeral ? '<span class="tag">temp</span>' : ''}
           <span class="img">${esc(c.image || '')}</span>
         </div>
         <div class="c-meta"><span>${esc(c.status || c.state)}</span></div>
@@ -253,6 +258,11 @@ function renderContainerTitle() {
   $('#ctName').textContent = c ? c.name : '未选择容器';
   $('#ctImage').textContent = c ? c.image : '';
   $('#ctState').className = 'state-dot ' + (c ? c.state : '');
+  const termBtn = $('#btnTerm');
+  if (termBtn) {
+    termBtn.disabled = !(c && c.state === 'running');
+    termBtn.title = !c ? '先选择一个容器' : c.state === 'running' ? '在容器里开一个 shell (Ctrl+`)' : '容器未运行，启动后可用';
+  }
   const actions = $('.actions');
   const old = $('#btnStartContainer');
   if (old) old.remove();
@@ -421,6 +431,11 @@ async function loadDir(path, { push = true, keepCursor = false } = {}) {
 
 async function selectContainer(c) {
   if (S.current && S.current.id === c.id) return;
+  if (termUI && termUI.isOpen()) {
+    // 终端本身就属于这个容器时保留它（例如从镜像起的临时容器：shell + 文件一起看）
+    const tid = termUI.currentContainerId();
+    if (tid !== c.id) termUI.close();
+  }
   S.current = c;
   S.history = []; S.hIndex = -1;
   S.entries = []; S.selection.clear(); S.cursor = -1;
@@ -980,6 +995,17 @@ function initEvents() {
   $('#btnHelp').onclick = () => $('#helpModal').showModal();
   $('#helpClose').onclick = () => $('#helpModal').close();
 
+  $('#btnTerm').onclick = () => {
+    if (!S.current) return;
+    if (termUI.isOpen()) termUI.close();
+    else termUI.openContainer(S.current, { workdir: S.path });
+  };
+
+  $('#btnImages').onclick = openImageModal;
+  $('#imageClose').onclick = () => $('#imageModal').close();
+  $('#imageRefresh').onclick = () => loadImages();
+  $('#imageFilter').addEventListener('input', () => renderImages());
+
   document.addEventListener('click', (e) => { if (!e.target.closest('.rowmenu')) closeRowMenu(); });
 
   document.addEventListener('keydown', onKey);
@@ -991,6 +1017,8 @@ function initEvents() {
 function onKey(e) {
   const tag = (e.target && e.target.tagName) || '';
   const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  // 终端聚焦时把按键全部让给 shell（Esc/Ctrl+L 之类都要能进容器）
+  if (e.target && e.target.closest && e.target.closest('#termBody')) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     if (S.drawer) { e.preventDefault(); saveDrawer(); }
     return;
@@ -1071,9 +1099,83 @@ function openEngineModal() {
   refreshEndpoints(true);
 }
 
+/* ---------------- 镜像弹窗 ---------------- */
+
+async function loadImages() {
+  const box = $('#imageList');
+  box.innerHTML = '<div class="binary-note">加载中…</div>';
+  try {
+    const r = await api('/api/images');
+    imageCache = r.images || [];
+    renderImages();
+  } catch (e) {
+    imageCache = null;
+    box.innerHTML = `<div class="binary-note">加载失败：${esc(e.message)}${e.hint ? '<br>' + esc(e.hint) : ''}</div>`;
+  }
+}
+
+function renderImages() {
+  const box = $('#imageList');
+  $('#imageCount').textContent = String((imageCache || []).length);
+  if (!imageCache) return;
+  const q = ($('#imageFilter').value || '').trim().toLowerCase();
+  const list = imageCache.filter((i) => !q || i.tags.join(' ').toLowerCase().includes(q) || i.shortId.includes(q));
+  if (!list.length) {
+    box.innerHTML = `<div class="binary-note">${q ? `没有匹配「${esc(q)}」的镜像` : '这台机器上没有镜像'}</div>`;
+    return;
+  }
+  box.innerHTML = list.map((i) => {
+    const tags = i.tags.length ? i.tags : [];
+    const ro = Boolean(S.engine && S.engine.readonly);
+    return `<div class="image-row" data-image="${esc(tags[0] || '')}">
+      <span class="img-id">${esc(i.shortId)}</span>
+      <div class="img-body">
+        <div class="img-tags">${tags.length ? tags.map((t) => `<span class="img-tag">${esc(t)}</span>`).join('') : '<span class="img-tag none">&lt;none&gt;</span>'}</div>
+        <div class="img-meta">${fmtSize(i.size)} · ${fmtTime(i.created)}</div>
+      </div>
+      ${ro ? '' : `<button class="btn ghost" ${tags.length ? '' : 'disabled'} data-act="shell">进 shell</button>`}
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.image-row').forEach((row) => {
+    row.onclick = async () => {
+      if (S.engine && S.engine.readonly) {
+        toast('只读模式下不能启动容器', { type: 'err', hint: '去掉 --read-only 重启即可' });
+        return;
+      }
+      const image = row.dataset.image;
+      if (!image) { toast('该镜像没有标签，无法直接创建容器', { type: 'err', hint: '先 docker tag 一个名字' }); return; }
+      $('#imageModal').close();
+      const sess = await termUI.openImage(image);
+      await loadContainers();
+      // 顺手把临时容器选进左侧：终端 + 容器文件系统一起看
+      if (sess && sess.container && sess.container.id) {
+        const c = S.containers.find((x) => x.id === sess.container.id);
+        if (c) await selectContainer(c);
+      }
+    };
+  });
+}
+
+function openImageModal() {
+  $('#imageFilter').value = '';
+  $('#imageModal').showModal();
+  loadImages();
+}
+
 /* ---------------- 启动 ---------------- */
 
 async function boot() {
+  termUI = createTermUI({
+    api,
+    authHeaders: () => (S.token ? { 'X-Auth': S.token } : {}),
+    tokenQuery: () => (S.token ? `?token=${encodeURIComponent(S.token)}` : ''),
+    toast,
+    ask,
+    getCurrent: () => S.current,
+    getPath: () => S.path,
+    onContainersChanged: () => { loadContainers(); },
+  });
+  termUI.bind();
   initDrop();
   initEvents();
   if (window.dockfile && window.dockfile.desktop) {

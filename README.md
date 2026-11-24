@@ -4,7 +4,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-ffb020.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%E2%89%A518-3c873a.svg)](package.json)
 
-在浏览器里直接浏览、上传、下载、编辑**任意容器内的文件**——包括**已停止的容器**和**没有 shell 的 distroless 镜像**。
+在浏览器里直接浏览、上传、下载、编辑**任意容器内的文件**——包括**已停止的容器**和**没有 shell 的 distroless 镜像**；需要的时候，选中容器（或镜像）就能**直接进 shell 敲命令**。
 
 直连 Docker Engine API（不依赖 `docker` CLI），Windows 上自动桥接 **WSL 里装的 Docker**，同时支持 Docker Desktop、Linux/macOS 本机 socket 和远程 `tcp://` 引擎。
 
@@ -47,6 +47,13 @@
 - 新建文件 / 新建文件夹 / 重命名 / 修改权限 / 多选删除（右键菜单或快捷键）
 - 容器未运行时给出明确提示，并提供「启动容器」按钮
 
+**终端（容器 / 镜像）**
+- 选中运行中的容器点「终端」→ 直接进容器 shell；自动探测 `/bin/sh` / `/bin/bash` / `/bin/ash` / `/bin/zsh`，也可以在工具条手动指定
+- shell 默认打开在你当前浏览的目录（`WorkingDir`），面板可拖高、窗口缩放会同步 `resize` 到容器 pty
+- 顶栏「镜像」→ 选一个镜像起**临时容器**进 shell（覆盖镜像自带 ENTRYPOINT），关掉终端容器自动删除；也可以顺便浏览这个镜像的文件系统
+- 走 Engine API 的 `exec` + HTTP/1.1 `upgrade` 双向原始流；WSL relay（真 socket）与 `dial-stdio`（独立子进程）两条通道都支持
+- 只读模式下终端同样禁用；会话超过 8 个自动回收最早的
+
 **引擎**
 - 多候选端点自动探测 + 顶栏一键切换（Windows 管道 / 每个 WSL 发行版 / tcp / unix socket）
 - WSL relay 断线自愈；重启后自动复用上次建立的 relay
@@ -56,6 +63,9 @@
 ![引擎选择](docs/05-endpoints.png)
 ![已停止容器照样能浏览，一键启动](docs/06-stopped.png)
 ![只读模式](docs/07-readonly.png)
+![容器终端](docs/08-terminal.png)
+![镜像列表](docs/09-images.png)
+![镜像起临时容器进 shell](docs/10-image-shell.png)
 
 ---
 
@@ -179,6 +189,8 @@ Windows 侧的 `dockfile` 拿不到 WSL 内的 unix socket，所以用两条通�
 | `F2` | 重命名选中 |
 | `F5` | 刷新 |
 | `Ctrl`+`S` | 保存正在编辑的文件 |
+| `Ctrl`+`\`` | 打开 / 收起终端 |
+| `Ctrl`+`Shift`+`C` / `V` | 终端内复制 / 粘贴 |
 | `Esc` | 关闭抽屉 / 弹窗 |
 | `?` | 快捷键帮助 |
 
@@ -209,6 +221,14 @@ Windows 侧的 `dockfile` 拿不到 WSL 内的 unix socket，所以用两条通�
 | POST | `/api/containers/:id/rename` | `{from,to}` |
 | POST | `/api/containers/:id/chmod` | `{path,mode}` |
 | POST | `/api/containers/:id/delete` | `{paths:[...]}` |
+| POST | `/api/containers/:id/term` | `{shell?,cols,rows,workdir?}` 开容器终端，返回 `{id,shell,stream,...}` |
+| GET | `/api/images` | 镜像列表（标签 / 体积 / 创建时间） |
+| POST | `/api/term` | `{image,shell?,cols,rows}` 按镜像起临时容器进 shell |
+| GET | `/api/term` | 当前终端会话列表 |
+| GET | `/api/term/:id/stream` | 终端输出流（原始字节，含 ANSI） |
+| POST | `/api/term/:id/input` | 键盘输入（body 为原始字节） |
+| POST | `/api/term/:id/resize` | `{cols,rows}` 同步 pty 尺寸 |
+| POST | `/api/term/:id/close` | 关闭会话（镜像会话会顺带删除临时容器） |
 
 错误统一为 `{"error":{"code","message","hint"}}`，`message` 是中文原因，`hint` 是下一步建议（例如容器未运行时提示启动容器）。
 
@@ -217,14 +237,14 @@ Windows 侧的 `dockfile` 拿不到 WSL 内的 unix socket，所以用两条通�
 ## 测试
 
 ```bash
-npm test          # tar 单元测试 + 对 mock engine 的接口全链路（不需要 Docker）
+npm test          # tar / 传输层 / 终端 / 接口全链路，全部跑在 mock engine 上（不需要 Docker）
 npm run test:live # 真实引擎只读断言 + 一次性 alpine 容器的写操作链路（自己清理）
 npm run test:ui   # Playwright：目录浏览、预览、拖拽上传、下载、引擎弹窗 + 截图到 docs/
 ```
 
-- `npm test`：33 项，覆盖 tar 读写 / PAX 长名 / 中文名 / 截断容错、目录列举、文本读写、3.4 MB 上传 sha256 校验、目录打包下载解包、429/403/401/400/404 各类错误、只读模式、token 鉴权
+- `npm test`：59 项，覆盖 tar 读写 / PAX 长名 / 中文名 / 截断容错、目录列举、文本读写、3.4 MB 上传 sha256 校验、目录打包下载解包、429/403/401/400/404 各类错误、只读模式、token 鉴权；终端部分覆盖 shell 探测、`workdir`、输入回显、resize、并发订阅、断开回收、镜像临时容器创建与删除、无 shell 镜像报错、会话上限
 - `npm run test:live`：与 `docker ps -a`、`docker exec ls`、`docker exec cat` 逐条对拍；写操作在 `dockfile-selftest` 容器里进行，结束时删除测试目录
-- `npm run test:ui`：真实引擎 + Chromium，产出 `docs/*.png`
+- `npm run test:ui`：Chromium 全流程（含终端与镜像 shell）+ 截图到 `docs/`
 
 Playwright 用的是本机已装的 Chromium（`~/AppData/Local/ms-playwright`），没有时 `npm i -D playwright-core` 即可。
 
@@ -268,10 +288,12 @@ lib/
   wsl.js               WSL 探测、relay 建立/复用/清理、stdio 回退
   wsl-relay.sh|.py     WSL 内的 relay 控制脚本与 python 回退实现
   fsops.js             文件语义层（列举、读写、上传、打包下载、删除…）
+  term.js              终端会话管理（exec / attach、shell 探测、临时容器清理）
   tar.js               零依赖 tar 读写（ustar / GNU longname / PAX）
   util.js              路径归一化、mime、权限、文件名编码
   routes.js            HTTP API
-web/                   零构建前端（原生 ES module）
+web/                   零构建前端（原生 ES module；web/vendor 内置 xterm.js）
+web/term.js            终端面板（xterm.js + 输入/输出/resize 双通道）
 electron/              桌面版主进程 + preload（共用 server-core，无框架改动）
 build/icon.ico         打包用图标（由 tools/make-icon.js 生成）
 tools/mock-engine.js   最小 Docker Engine 实现 + 自动生成的示例容器
@@ -284,6 +306,12 @@ test/                  tar / API / 真实引擎 / UI 四套测试
 - 文本编辑上限 2 MB；超过请下载后用本地编辑器
 - 文件名含换行符时列表解析可能不准确（`stat` 输出按行切分）
 - 目录下载是 tar/tar.gz 打包流，不支持断点续传
+- 终端是"一页面一会话"：关掉标签页/刷新页面会结束 shell；镜像起的临时容器关闭即删除（不保留改动）
+- 终端不支持分屏/多标签，同一台机器多个 dockfile 实例同时开终端时各自独立
+
+## 第三方组件
+
+- [xterm.js](https://github.com/xtermjs/xterm.js) 5.5.0 + addon-fit 0.10.0（MIT）——终端渲染，以未压缩的 dist 文件内置在 `web/vendor/`，许可见 `web/vendor/LICENSE-xterm.txt`
 
 ## License
 

@@ -21,6 +21,8 @@ jobs:
       - name: 语法检查
         run: |
           node --check server.js
-          for f in lib/*.js tools/*.js web/app.js test/*.js; do node --check "$f"; done
+          for f in lib/*.js tools/*.js test/*.js web/vendor/*.js; do node --check "$f"; done
+          # 前端是原生 ES module：用 module 模式解析（不依赖 Node 的语法自动探测）
+          for f in web/app.js web/term.js; do node --input-type=module --check < "$f"; done
       - name: 单元测试 + 接口集成测试（内置 mock engine，不需要 Docker）
         run: npm test

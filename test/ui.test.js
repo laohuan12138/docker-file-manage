@@ -231,13 +231,67 @@ const ACTIVE_ID = `document.querySelector('.containers li.active').dataset.id`;
       chip: document.querySelector('#engineChip').innerText.replace(/\s+/g, ' '),
       uploadHidden: !document.querySelector('#btnUpload')?.offsetParent,
       newFileHidden: !document.querySelector('#btnNewFile')?.offsetParent,
+      termHidden: !document.querySelector('#btnTerm')?.offsetParent,
       rows: document.querySelectorAll('#fileRows tr').length,
     }));
-    log(/只读/.test(ro.chip) && ro.uploadHidden && ro.newFileHidden, `只读模式：写入口已隐藏（${ro.rows} 行可浏览）`);
+    log(/只读/.test(ro.chip) && ro.uploadHidden && ro.newFileHidden && ro.termHidden, `只读模式：写入口与终端都已隐藏（${ro.rows} 行可浏览）`);
     await roPage.screenshot({ path: path.join(SHOTS, '07-readonly.png') });
     await roPage.close();
 
-    // 13) 清理
+    // 13) 容器终端
+    await page.locator(`#containerList li:has-text("${CONTAINER}")`).first().click();
+    await page.waitForTimeout(400);
+    // 切到 /etc 再开终端：既能验证 workdir，截图也干净
+    await page.locator('#pathInput').fill('/etc');
+    await page.locator('#pathForm').dispatchEvent('submit');
+    await page.waitForTimeout(700);
+    await page.evaluate(() => { const t = document.querySelector('#uploadTray'); if (t) t.hidden = true; });
+    const termDisabled = await page.locator('#btnTerm').isDisabled();
+    log(!termDisabled, '运行中容器「终端」按钮可用');
+    await page.locator('#btnTerm').click();
+    await page.waitForFunction(
+      () => /#\s*$/.test((document.querySelector('.xterm-rows') || {}).textContent || ''),
+      null, { timeout: 25000 },
+    ).then(() => log(true, '终端拿到 shell 提示符')).catch(() => log(false, '终端未拿到提示符'));
+    await page.locator('.term-body').click();
+    await page.keyboard.type('uname -a\n');
+    await page.waitForFunction(
+      () => /Linux/.test((document.querySelector('.xterm-rows') || {}).textContent || ''),
+      null, { timeout: 10000 },
+    ).then(() => log(true, '终端内执行命令有输出')).catch(() => log(false, '终端命令无输出'));
+    await page.keyboard.type('cat passwd\n');
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: path.join(SHOTS, '08-terminal.png') });
+
+    // 镜像弹窗 + 镜像进 shell（只在 mock 模式跑，真机不碰用户的镜像）
+    if (!LIVE) {
+      await page.locator('#btnImages').click();
+      await page.waitForSelector('.image-row', { timeout: 15000 });
+      const imgCount = await page.locator('.image-row').count();
+      log(imgCount > 0, `镜像弹窗列出 ${imgCount} 个镜像`);
+      await page.screenshot({ path: path.join(SHOTS, '09-images.png') });
+      await page.locator('.image-row').first().locator('[data-act="shell"]').click();
+      await page.waitForFunction(
+        () => /root@dockfile-shell/.test((document.querySelector('.xterm-rows') || {}).textContent || ''),
+        null, { timeout: 25000 },
+      ).then(() => log(true, '镜像进了临时容器 shell')).catch(() => log(false, '镜像 shell 未就绪'));
+      const tag = await page.locator('#termTag').isVisible();
+      log(tag, '终端头部标出「临时容器」');
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: path.join(SHOTS, '10-image-shell.png') });
+      await page.locator('#termClose').click();
+      await page.waitForTimeout(1500);
+      const leftover = await page.evaluate(async () => {
+        const r = await (await fetch('/api/containers')).json();
+        return r.containers.filter((c) => c.ephemeral).length;
+      });
+      log(leftover === 0, `关闭终端后临时容器已删除（残留 ${leftover}）`);
+    } else {
+      await page.locator('#termClose').click();
+      await page.waitForTimeout(600);
+    }
+
+    // 14) 清理
     await page.evaluate(async ({ id, name, dir }) => {
       await fetch(`/api/containers/${encodeURIComponent(id)}/delete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: [`${dir}/${name}`] }),

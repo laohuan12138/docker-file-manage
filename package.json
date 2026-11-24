@@ -1,6 +1,6 @@
 {
   "name": "dockfile",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "description": "Docker 容器文件管理器 — 直连 Docker Engine API，支持 WSL / Linux / macOS / Windows Docker Desktop，拖拽上传下载",
   "author": "laohuan12138",
@@ -16,7 +16,7 @@
     "dist:portable": "node tools/build-desktop.js",
     "icon": "node tools/make-icon.js",
     "mock": "node tools/mock-engine.js",
-    "test": "node --test test/tar.test.js test/transport.test.js test/api.test.js",
+    "test": "node --test test/tar.test.js test/transport.test.js test/term.test.js test/api.test.js",
     "test:live": "node --test test/wsl-live.test.js test/wsl-write.test.js",
     "test:ui": "node test/ui.test.js"
   },

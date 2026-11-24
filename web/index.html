@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dockfile · Docker 容器文件管理器</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230b0f14'/%3E%3Cpath d='M6 11h20v14H6z' fill='none' stroke='%23ffb020' stroke-width='2'/%3E%3Cpath d='M6 15h20M11 11v4M17 11v4M23 11v4' stroke='%23ffb020' stroke-width='1.5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -31,6 +32,7 @@
     <span id="engineLabel">正在探测引擎…</span>
   </div>
   <div class="spacer"></div>
+  <button class="btn ghost" id="btnImages">镜像</button>
   <button class="btn ghost" id="btnEndpoints">引擎</button>
   <button class="btn ghost" id="btnHelp" title="快捷键 (?)">?</button>
 </header>
@@ -65,6 +67,7 @@
       <button class="btn icon" id="btnGoPath" title="跳转 (Enter)">→</button>
       <div class="spacer"></div>
       <div class="actions">
+        <button class="btn" id="btnTerm" title="在容器里开一个 shell (Ctrl+`)">终端</button>
         <button class="btn" id="btnNewFile" title="在当前目录新建文件">新建文件</button>
         <button class="btn" id="btnNewDir" title="在当前目录新建文件夹">新建文件夹</button>
         <button class="btn accent" id="btnUpload">上传</button>
@@ -106,6 +109,29 @@
         <tbody id="fileRows"></tbody>
       </table>
       <div class="empty" id="emptyState" hidden></div>
+    </div>
+
+    <div class="term-dock" id="termDock" hidden>
+      <div class="term-grip" id="termGrip" title="拖动调整高度"></div>
+      <div class="term-head">
+        <span class="term-dot" id="termDot"></span>
+        <span class="term-title" id="termTitle">终端</span>
+        <span class="term-tag" id="termTag" hidden>临时容器</span>
+        <span class="term-meta" id="termMeta"></span>
+        <div class="spacer"></div>
+        <select class="term-shell" id="termShellSel" title="指定 shell（留空＝自动探测）">
+          <option value="">自动探测</option>
+          <option value="/bin/bash">/bin/bash</option>
+          <option value="/bin/sh">/bin/sh</option>
+          <option value="/bin/ash">/bin/ash</option>
+          <option value="/bin/zsh">/bin/zsh</option>
+          <option value="__custom">自定义…</option>
+        </select>
+        <button class="btn ghost" id="termRestart" title="重开会话">重启</button>
+        <button class="btn ghost" id="termClear" title="清屏">清屏</button>
+        <button class="btn ghost" id="termClose" title="关闭 (Ctrl+`)">关闭</button>
+      </div>
+      <div class="term-body" id="termBody"></div>
     </div>
 
     <div class="statusbar">
@@ -173,6 +199,22 @@
   </div>
 </dialog>
 
+<dialog class="modal wide" id="imageModal">
+  <div class="modal-inner">
+    <h3>镜像 <span class="count" id="imageCount">0</span></h3>
+    <p class="modal-desc">点「进 shell」会按镜像起一个临时容器并直接进终端，关闭终端即删除容器；也能用它浏览镜像里的文件系统。</p>
+    <div class="modal-search">
+      <svg class="icon"><use href="#i-search"/></svg>
+      <input id="imageFilter" placeholder="过滤镜像 / 标签" spellcheck="false">
+    </div>
+    <div class="image-list" id="imageList"><div class="binary-note">加载中…</div></div>
+    <menu class="modal-actions">
+      <button class="btn" id="imageRefresh">刷新</button>
+      <button class="btn accent" id="imageClose">关闭</button>
+    </menu>
+  </div>
+</dialog>
+
 <dialog class="modal wide" id="helpModal">
   <div class="modal-inner">
     <h3>快捷键</h3>
@@ -185,10 +227,12 @@
       <div><kbd>Del</kbd><span>删除选中</span></div>
       <div><kbd>F2</kbd><span>重命名选中</span></div>
       <div><kbd>Ctrl</kbd>+<kbd>S</kbd><span>保存编辑</span></div>
+      <div><kbd>Ctrl</kbd>+<kbd>`</kbd><span>打开 / 收起终端</span></div>
       <div><kbd>Esc</kbd><span>关闭抽屉 / 弹窗</span></div>
       <div><kbd>?</kbd><span>本帮助</span></div>
     </div>
     <p class="modal-desc">拖拽文件或文件夹到列表即可上传；上传目录会保留相对路径。</p>
+    <p class="modal-desc">终端：选中容器点「终端」直接进 shell；右上角「镜像」可对镜像起临时容器。终端里 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd> 复制粘贴。</p>
     <p class="modal-desc" id="desktopInfo" hidden></p>
     <menu class="modal-actions"><button class="btn accent" id="helpClose">知道了</button></menu>
   </div>
@@ -196,6 +240,8 @@
 
 <input type="file" id="filePicker" multiple hidden>
 <input type="file" id="dirPicker" webkitdirectory directory multiple hidden>
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

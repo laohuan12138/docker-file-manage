@@ -367,6 +367,150 @@ function runExec(c, argv) {
   return { code: 127, stdout: '', stderr: `mock exec: ${cmd}: command not found` };
 }
 
+/* ---------------- 镜像 ---------------- */
+
+const IMAGE_LIST = [
+  { Id: 'sha256:' + crypto.createHash('sha256').update('mock-nginx').digest('hex'), RepoTags: ['nginx:1.27-alpine'], Size: 53_200_000, Created: 1720000000, Containers: 1 },
+  { Id: 'sha256:' + crypto.createHash('sha256').update('mock-pg').digest('hex'), RepoTags: ['postgres:16-alpine'], Size: 241_000_000, Created: 1720000000, Containers: 1 },
+  { Id: 'sha256:' + crypto.createHash('sha256').update('mock-alpine').digest('hex'), RepoTags: ['alpine:3.20'], Size: 7_800_000, Created: 1720000000, Containers: 0 },
+  { Id: 'sha256:' + crypto.createHash('sha256').update('mock-py').digest('hex'), RepoTags: ['python:3.12-slim'], Size: 128_000_000, Created: 1720000000, Containers: 0 },
+  { Id: 'sha256:' + crypto.createHash('sha256').update('mock-distroless').digest('hex'), RepoTags: ['gcr.io/distroless/static:nonroot', 'gcr.io/distroless/static@sha256:e2f7'], Size: 2_100_000, Created: 1720000000, Containers: 0 },
+];
+/** 没有 shell 的镜像（用来演示/测试 NO_SHELL 分支） */
+const NO_SHELL_IMAGES = new Set(['gcr.io/distroless/static:nonroot', 'gcr.io/distroless/static@sha256:e2f7']);
+/** mock 里"存在"的 shell 二进制（alpine 只有 sh/ash，没有 bash） */
+const SHELL_BINS = new Set(['/bin/sh', '/bin/ash', '/busybox/sh']);
+
+function listImages() {
+  return IMAGE_LIST.map((i) => ({ ...i, RepoTags: i.RepoTags.slice() }));
+}
+
+function imageHasShell(image) {
+  if (NO_SHELL_IMAGES.has(image)) return false;
+  return true;
+}
+
+/* ---------------- 终端模拟（pty） ---------------- */
+
+function shellLine(c, line, cwd) {
+  const root = rootOf(c);
+  const argv = line.trim().split(/\s+/).filter(Boolean);
+  const cmd = argv[0] || '';
+  const args = argv.slice(1);
+  const host = (p) => path.join(root, String(p || '/').replace(/^\/+/, ''));
+  const resolve = (p) => {
+    if (!p) return cwd;
+    return p.startsWith('/') ? path.posix.normalize(p) : path.posix.normalize(path.posix.join(cwd, p));
+  };
+  const nl = '\r\n';
+  switch (cmd) {
+    case '': return { out: '', cwd };
+    case 'help':
+      return { out: `mock shell 支持：ls cd pwd cat echo whoami id uname env ps date clear exit${nl}`, cwd };
+    case 'pwd': return { out: cwd + nl, cwd };
+    case 'echo': return { out: args.join(' ') + nl, cwd };
+    case 'whoami': return { out: 'root' + nl, cwd };
+    case 'id': return { out: 'uid=0(root) gid=0(root) groups=0(root)' + nl, cwd };
+    case 'uname': return { out: `Linux ${c.name} 6.8.0-mock #1 SMP PREEMPT_DYNAMIC x86_64 GNU/Linux${nl}`, cwd };
+    case 'date': return { out: new Date().toUTCString() + nl, cwd };
+    case 'env':
+      return { out: `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${nl}HOSTNAME=${c.name}${nl}TERM=xterm-256color${nl}`, cwd };
+    case 'ps':
+      return { out: `PID   USER     TIME  COMMAND${nl}    1 root      0:00 ${c.command || 'sh'}${nl}`, cwd };
+    case 'clear': return { out: '\x1b[2J\x1b[H', cwd };
+    case 'cd': {
+      const target = resolve(args[0] || '/root');
+      try {
+        if (!fs.statSync(host(target)).isDirectory()) return { out: '', err: `cd: ${target}: Not a directory${nl}`, cwd };
+      } catch (_) {
+        return { out: '', err: `cd: ${target}: No such file or directory${nl}`, cwd };
+      }
+      return { out: '', cwd: target };
+    }
+    case 'ls': {
+      const flags = args.filter((a) => a.startsWith('-'));
+      const rest = args.filter((a) => !a.startsWith('-'));
+      const target = resolve(rest[0] || '');
+      let names;
+      try { names = fs.readdirSync(host(target)); } catch (_) {
+        return { out: '', err: `ls: ${rest[0] || target}: No such file or directory${nl}`, cwd };
+      }
+      if (!flags.includes('-a')) names = names.filter((n) => !n.startsWith('.'));
+      names.sort();
+      if (flags.includes('-l')) {
+        const rows = names.map((n) => {
+          const h = path.join(host(target), n);
+          const st = fs.lstatSync(h);
+          const dir = st.isDirectory();
+          return `${dir ? 'd' : '-'}rw-r--r--    1 root     root  ${String(dir ? 4096 : st.size).padStart(10)}  ${path.posix.basename(target) === '/' ? '' : ''}${n}`;
+        });
+        return { out: rows.join(nl) + (rows.length ? nl : ''), cwd };
+      }
+      if (!names.length) return { out: '', cwd };
+      const painted = names.map((n) => {
+        const h = path.join(host(target), n);
+        try { return fs.statSync(h).isDirectory() ? `\x1b[1;34m${n}\x1b[0m` : n; } catch (_) { return n; }
+      });
+      return { out: painted.join('  ') + nl, cwd };
+    }
+    case 'cat': {
+      const target = resolve(args[0] || '');
+      try {
+        const st = fs.statSync(host(target));
+        if (st.isDirectory()) return { out: '', err: `cat: ${target}: Is a directory${nl}`, cwd };
+        if (st.size > 256 * 1024) return { out: '', err: `cat: ${target}: 文件太大（mock 只读 256KB）${nl}`, cwd };
+        return { out: fs.readFileSync(host(target), 'utf8').replace(/\r?\n/g, nl), cwd };
+      } catch (_) {
+        return { out: '', err: `cat: ${target}: No such file or directory${nl}`, cwd };
+      }
+    }
+    default:
+      return { out: '', err: `sh: ${cmd}: not found${nl}`, cwd };
+  }
+}
+
+/** 把一个已 hijack 的 socket 变成可交互的假 shell */
+function attachPty(socket, c, { initial = '', cwd: startCwd = '/' } = {}) {
+  let cwd = startCwd || '/';
+  let line = '';
+  let esc = 0;
+  const write = (s) => { try { if (!socket.destroyed) socket.write(s); } catch (_) {} };
+  const prompt = () => write(`\x1b[1;32mroot@${c.name}\x1b[0m:\x1b[1;34m${cwd}\x1b[0m# `);
+
+  const feed = (str) => {
+    for (const ch of str) {
+      if (esc === 1) { if (ch === '[' || ch === 'O') { esc = 2; continue; } esc = 0; continue; }
+      if (esc === 2) { if (/[A-Za-z~]/.test(ch)) esc = 0; continue; }
+      if (ch === '\x1b') { esc = 1; continue; }
+      if (ch === '\r' || ch === '\n') {
+        const cmd = line;
+        line = '';
+        write('\r\n');
+        if (/^\s*(exit|logout|quit)\s*$/.test(cmd)) { try { socket.end(); } catch (_) {} return; }
+        const r = shellLine(c, cmd, cwd);
+        cwd = r.cwd;
+        if (r.out) write(r.out);
+        if (r.err) write(r.err);
+        prompt();
+        continue;
+      }
+      if (ch === '\x03') { write('^C\r\n'); line = ''; prompt(); continue; }
+      if (ch === '\x04') { try { socket.end(); } catch (_) {} return; }
+      if (ch === '\x7f' || ch === '\b') { if (line.length) { line = line.slice(0, -1); write('\b \b'); } continue; }
+      if (ch < ' ') continue;
+      line += ch;
+      write(ch);
+    }
+  };
+
+  socket.on('error', () => {});
+  socket.on('close', () => {});
+  socket.setNoDelay?.(true);
+  prompt();
+  if (initial) feed(initial);
+  socket.on('data', (chunk) => feed(chunk.toString('utf8')));
+}
+
 /* ---------------- HTTP ---------------- */
 
 function json(res, status, obj) {
@@ -388,7 +532,7 @@ function listContainers() {
     State: c.running ? 'running' : 'exited',
     Status: c.running ? 'Up 2 hours' : 'Exited (0) 5 hours ago',
     Ports: c.running ? [{ IP: '0.0.0.0', PrivatePort: 80, PublicPort: 8080, Type: 'tcp' }] : [],
-    Labels: { 'com.docker.compose.project': c.project, 'com.docker.compose.service': c.service },
+    Labels: { ...(c.labels || {}), 'com.docker.compose.project': c.project, 'com.docker.compose.service': c.service },
   }));
 }
 
@@ -425,6 +569,30 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (p === '/containers/json') { json(res, 200, listContainers()); return; }
+  if (p === '/images/json') { json(res, 200, listImages()); return; }
+
+  if (/^\/containers\/create$/.test(p) && req.method === 'POST') {
+    const body = JSON.parse((await readAll(req)).toString('utf8') || '{}');
+    if (!IMAGE_LIST.some((i) => i.RepoTags.includes(body.Image))) {
+      return json(res, 404, { message: `No such image: ${body.Image}` });
+    }
+    const name = url.searchParams.get('name') || `mock-${crypto.randomBytes(3).toString('hex')}`;
+    const argv = (body.Entrypoint && body.Entrypoint.length ? body.Entrypoint : null) || body.Cmd || ['/bin/sh'];
+    const c = {
+      name,
+      image: body.Image,
+      running: false,
+      command: argv.join(' '),
+      labels: body.Labels || {},
+      created: Math.floor(Date.now() / 1000),
+      id: crypto.createHash('sha256').update('mock-created-' + name + Date.now()).digest('hex'),
+      shellless: !imageHasShell(body.Image) || !SHELL_BINS.has(argv[0]),
+    };
+    state.set(c.name, c);
+    rootOf(c);
+    json(res, 201, { Id: c.id, Warnings: [] });
+    return;
+  }
 
   let m = /^\/containers\/([^/]+)\/json$/.exec(p);
   if (m) {
@@ -437,7 +605,36 @@ const server = http.createServer(async (req, res) => {
   if (m && req.method === 'POST') {
     const c = findContainer(m[1]);
     if (!c) return json(res, 404, { message: 'no such container' });
+    if (c.shellless) {
+      return json(res, 500, { message: `OCI runtime create failed: exec: "/bin/sh": stat /bin/sh: no such file or directory: unknown` });
+    }
     c.running = true;
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  m = /^\/containers\/([^/]+)\/resize$/.exec(p);
+  if (m && req.method === 'POST') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  m = /^\/exec\/([^/]+)\/resize$/.exec(p);
+  if (m && req.method === 'POST') {
+    if (!execs.get(m[1])) return json(res, 404, { message: 'no such exec instance' });
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  m = /^\/containers\/([^/]+)$/.exec(p);
+  if (m && req.method === 'DELETE') {
+    const c = findContainer(m[1]);
+    if (!c) return json(res, 404, { message: 'no such container' });
+    state.delete(c.name);
+    try { fs.rmSync(containerRoot(c.name), { recursive: true, force: true }); } catch (_) {}
     res.writeHead(204);
     res.end();
     return;
@@ -480,7 +677,7 @@ const server = http.createServer(async (req, res) => {
     if (!c.running) return json(res, 409, { message: `Container ${c.id} is not running` });
     const body = JSON.parse((await readAll(req)).toString('utf8') || '{}');
     const id = crypto.randomUUID();
-    execs.set(id, { container: c.id, argv: body.Cmd || [], started: false });
+    execs.set(id, { container: c.id, argv: body.Cmd || [], workdir: body.WorkingDir || '', started: false });
     return json(res, 201, { Id: id });
   }
 
@@ -513,6 +710,75 @@ const server = http.createServer(async (req, res) => {
   }
 
   json(res, 404, { message: `mock-engine: 未实现 ${req.method} ${p}` });
+});
+
+/** 101 升级：exec -it / attach 的交互流 */
+server.on('upgrade', (req, socket, head) => {
+  socket.on('error', () => {}); // 客户端随时可能取消，不能变成未捕获异常
+  const url = new URL(req.url, 'http://mock');
+  const p = url.pathname.replace(new RegExp(`^/v[0-9.]+`), '');
+  const reject = (status, message) => {
+    const body = Buffer.from(JSON.stringify({ message }));
+    try {
+      socket.write(`HTTP/1.1 ${status} ${status === 500 ? 'Internal Server Error' : status === 404 ? 'Not Found' : 'Bad Request'}\r\n`
+        + `Content-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`);
+      socket.write(body);
+    } catch (_) {}
+    try { socket.end(); } catch (_) {}
+  };
+  const upgradeAndAttach = (c, tail, workdir) => {
+    try {
+      socket.write('HTTP/1.1 101 UPGRADED\r\nContent-Type: application/vnd.docker.raw-stream\r\n'
+        + 'Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n');
+    } catch (_) { return; }
+    attachPty(socket, c, { initial: tail.toString('utf8'), cwd: workdir });
+  };
+
+  const begin = (tail) => {
+    let m = /^\/exec\/([^/]+)\/start$/.exec(p);
+    if (m) {
+      const ex = execs.get(m[1]);
+      if (!ex) return reject(404, 'no such exec instance');
+      const c = findContainer(ex.container);
+      if (!c) return reject(404, 'no such container');
+      if (!SHELL_BINS.has(ex.argv[0])) {
+        return reject(500, `OCI runtime exec failed: exec failed: unable to start container process: `
+          + `exec: "${ex.argv[0]}": stat ${ex.argv[0]}: no such file or directory: unknown`);
+      }
+      ex.started = true;
+      ex.exitCode = 0;
+      return upgradeAndAttach(c, tail, ex.workdir);
+    }
+    m = /^\/containers\/([^/]+)\/attach$/.exec(p);
+    if (m) {
+      const c = findContainer(m[1]);
+      if (!c) return reject(404, 'no such container');
+      return upgradeAndAttach(c, tail);
+    }
+    reject(400, `mock-engine: 未实现 upgrade ${p}`);
+  };
+
+  // 先把请求体读完再进交互模式，否则 {"Detach":false,"Tty":true} 会被当成键盘输入。
+  // 注意：小请求体常常已经随响应头一起到了 head 里，必须一起算。
+  const need = Number(req.headers['content-length'] || 0);
+  let got = 0;
+  let tailBuf = Buffer.alloc(0);
+  const consume = (chunk) => {
+    if (!chunk || !chunk.length) return;
+    const take = Math.min(need - got, chunk.length);
+    got += take;
+    if (chunk.length > take) tailBuf = Buffer.concat([tailBuf, chunk.subarray(take)]);
+  };
+  consume(head);
+  if (got >= need) return begin(tailBuf);
+  const onData = (chunk) => {
+    consume(chunk);
+    if (got >= need) {
+      socket.removeListener('data', onData);
+      begin(tailBuf);
+    }
+  };
+  socket.on('data', onData);
 });
 
 ensureFixtures();
