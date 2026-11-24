@@ -9,3 +9,7 @@ tools/.mock-modes.json
 # 测试临时产物
 test/download-check.txt
 test/shots/
+
+# 桌面版构建产物
+release/
+

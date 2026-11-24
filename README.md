@@ -90,6 +90,40 @@ node server.js --docker-host tcp://127.0.0.1:23750 --open  # 另开一个终端
 
 ---
 
+## 桌面版（Electron）
+
+不想开终端就用桌面版：窗口里是同一套界面，内部服务跑在 `127.0.0.1` 的**随机空闲端口**上，只有本窗口能访问。
+
+![桌面版](docs/desktop.png)
+
+```bash
+npm install            # 只在桌面开发/打包时需要（Electron 属于 devDependency，运行时依旧零依赖）
+npm run desktop        # 开发模式直接开窗口
+npm run dist           # 打包 → release/dockfile-<版本>-portable.exe + release/dockfile-<版本>-setup.exe
+```
+
+产物（`release/`）：
+
+| 文件 | 说明 |
+|---|---|
+| `dockfile-1.0.0-portable.exe` | 免安装，双击即用（约 71 MB，运行时自解压到临时目录） |
+| `dockfile-1.0.0-setup.exe` | 安装版：可选安装目录、桌面/开始菜单快捷方式、卸载项 |
+
+桌面版比浏览器版多出来的东西：
+
+- **单实例**：重复双击只会聚焦已有窗口，不会起第二个服务
+- **托盘图标**：显示窗口 / 在浏览器打开 / 打开下载目录 / 退出
+- 窗口大小与位置记忆；`Ctrl+R` 刷新、`F12` 开发者工具、`Alt+F4` 退出
+- **下载**统一保存到系统「下载」文件夹（重名自动加序号），完成时弹系统通知，点击通知定位文件
+- 关闭窗口即退出，并顺手清掉 WSL 里的 relay
+
+> 未做代码签名：首次运行 Windows SmartScreen 会提示，点「更多信息 → 仍要运行」即可。
+> 首次打包会下载 Electron 运行时，国内可加 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`。
+
+桌面版与命令行版共用 `lib/server-core.js`，所以 WSL 桥接、引擎切换、拖拽上传这些行为完全一致。
+
+---
+
 ## 连接引擎
 
 ### 自动探测顺序
@@ -225,8 +259,9 @@ Playwright 用的是本机已装的 Chromium（`~/AppData/Local/ms-playwright`�
 ## 目录结构
 
 ```
-server.js              入口：参数解析、静态资源、路由
+server.js              命令行入口（参数解析、终端输出、自动开浏览器）
 lib/
+  server-core.js       服务内核：静态资源 + API + 引擎管理（命令行版与桌面版共用）
   endpoint.js          引擎发现 / 多端点切换 / 断线自愈
   docker.js            Engine API 客户端（archive、exec、容器）
   transport.js         unix / npipe / tcp 传输 + dial-stdio 上的手写 HTTP/1.1
@@ -237,6 +272,8 @@ lib/
   util.js              路径归一化、mime、权限、文件名编码
   routes.js            HTTP API
 web/                   零构建前端（原生 ES module）
+electron/              桌面版主进程 + preload（共用 server-core，无框架改动）
+build/icon.ico         打包用图标（由 tools/make-icon.js 生成）
 tools/mock-engine.js   最小 Docker Engine 实现 + 自动生成的示例容器
 test/                  tar / API / 真实引擎 / UI 四套测试
 ```

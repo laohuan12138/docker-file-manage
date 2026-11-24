@@ -1067,7 +1067,21 @@ function openEngineModal() {
 async function boot() {
   initDrop();
   initEvents();
-  await loadHealth();
+  if (window.dockfile && window.dockfile.desktop) {
+    const info = $('#desktopInfo');
+    const v = window.dockfile.versions || {};
+    if (info) {
+      info.hidden = false;
+      info.textContent = `桌面版 · Electron ${v.electron || '?'} · Chromium ${v.chrome || '?'} · 下载保存到「下载」文件夹`;
+    }
+    document.body.classList.add('desktop');
+  }
+  let ok = false;
+  for (let i = 0; i < 8 && !ok; i++) {
+    await loadHealth();
+    ok = Boolean(S.engine && S.engine.ok);
+    if (!ok) await new Promise((r) => setTimeout(r, 1500));
+  }
   await loadContainers();
   if (S.containers.length) {
     const first = S.containers.find((c) => c.state === 'running') || S.containers[0];

@@ -3,14 +3,77 @@
   "version": "1.0.0",
   "private": true,
   "description": "Docker 容器文件管理器 — 直连 Docker Engine API，支持 WSL / Linux / macOS / Windows Docker Desktop，拖拽上传下载",
-  "bin": { "dockfile": "server.js" },
+  "author": "laohuan12138",
+  "license": "MIT",
+  "main": "electron/main.js",
+  "bin": {
+    "dockfile": "server.js"
+  },
   "scripts": {
     "start": "node server.js --open",
+    "desktop": "node tools/start-desktop.js",
+    "dist": "electron-builder --win --x64",
+    "dist:portable": "electron-builder --win portable --x64",
+    "icon": "node tools/make-icon.js",
     "mock": "node tools/mock-engine.js",
     "test": "node --test test/tar.test.js test/api.test.js",
     "test:live": "node --test test/wsl-live.test.js test/wsl-write.test.js",
     "test:ui": "node test/ui.test.js"
   },
-  "engines": { "node": ">=18" },
-  "license": "MIT"
+  "engines": {
+    "node": ">=18"
+  },
+  "build": {
+    "appId": "io.github.laohuan12138.dockfile",
+    "productName": "dockfile",
+    "copyright": "MIT © laohuan12138",
+    "asar": true,
+    "compression": "normal",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "lib/**/*",
+      "web/**/*",
+      "package.json",
+      "LICENSE",
+      "!**/*.map"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        },
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "dockfile-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "dockfile-${version}-portable.exe",
+      "requestExecutionLevel": "user"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "dockfile",
+      "artifactName": "dockfile-${version}-setup.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  }
 }
+
+
