@@ -3,6 +3,7 @@
 [![ci](https://github.com/laohuan12138/docker-file-manage/actions/workflows/ci.yml/badge.svg)](https://github.com/laohuan12138/docker-file-manage/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-ffb020.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%E2%89%A518-3c873a.svg)](package.json)
+[![release](https://img.shields.io/github/v/release/laohuan12138/docker-file-manage?color=ffb020)](https://github.com/laohuan12138/docker-file-manage/releases/latest)
 
 在浏览器里直接浏览、上传、下载、编辑**任意容器内的文件**——包括**已停止的容器**和**没有 shell 的 distroless 镜像**；需要的时候，选中容器（或镜像）就能**直接进 shell 敲命令**。
 
@@ -103,6 +104,8 @@ node server.js --docker-host tcp://127.0.0.1:23750 --open  # 另开一个终端
 ## 桌面版（Electron）
 
 不想开终端就用桌面版：窗口里是同一套界面，内部服务跑在 `127.0.0.1` 的**随机空闲端口**上，只有本窗口能访问。
+
+**直接下载**：[latest release](https://github.com/laohuan12138/docker-file-manage/releases/latest) → `dockfile-<版本>-setup.exe`（安装版）/ `dockfile-<版本>-portable.exe`（免安装）。
 
 ![桌面版](docs/desktop.png)
 
