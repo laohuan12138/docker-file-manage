@@ -7,8 +7,9 @@
  */
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 const {
-  app, BrowserWindow, Menu, Tray, shell, dialog, session, Notification, nativeImage,
+  app, BrowserWindow, Menu, Tray, shell, dialog, session, Notification, nativeImage, ipcMain,
 } = require('electron');
 
 const { createDockfileServer } = require('../lib/server-core');
@@ -51,6 +52,23 @@ function saveWindowState() {
 
 /* ---------------- 下载 ---------------- */
 
+function dlLog(...args) {
+  if (!process.env.DOCKFILE_LOG_DOWNLOADS) return;
+  try {
+    fs.appendFileSync(path.join(app.getPath('temp'), 'dockfile-download.log'), `[${new Date().toISOString()}] ${args.join(' ')}\n`);
+  } catch (_) {}
+}
+
+function decodeName(name) {
+  let n = String(name || '');
+  // 有些响应头会传回百分号编码的文件名
+  if (/%[0-9a-f]{2}/i.test(n)) {
+    try { n = decodeURIComponent(n); } catch (_) {}
+  }
+  n = n.replace(/[\\/:*?"<>|]/g, '_').trim();
+  return n || 'download';
+}
+
 function uniquePath(target) {
   if (!fs.existsSync(target)) return target;
   const dir = path.dirname(target);
@@ -63,26 +81,91 @@ function uniquePath(target) {
   return path.join(dir, `${base}-${Date.now()}${ext}`);
 }
 
+function downloadDir() {
+  const custom = process.env.DOCKFILE_DOWNLOAD_DIR || '';
+  const dir = custom || app.getPath('downloads');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+  return dir;
+}
+
+function notifySaved(target) {
+  try {
+    const n = new Notification({
+      title: '下载完成',
+      body: `${path.basename(target)}\n${path.dirname(target)}`,
+      icon: ICON,
+      silent: true,
+    });
+    n.on('click', () => shell.showItemInFolder(target));
+    n.show();
+  } catch (_) {}
+}
+
+/** 页面请求保存某个 URL（桌面版主路径，直接 Node 写盘） */
+function setupSaveBridge() {
+  ipcMain.handle('dockfile:save-url', async (_event, payload) => {
+    const url = String((payload && payload.url) || '');
+    // 只允许保存本机内部服务的内容
+    if (!/^http:\/\/127\.0\.0\.1:\d+\//i.test(url)) throw new Error('只支持保存本机 dockfile 服务的内容');
+    const name = decodeName((payload && payload.filename) || path.basename(new URL(url).pathname));
+    const target = uniquePath(path.join(downloadDir(), name));
+    await new Promise((resolve, reject) => {
+      const req = http.get(url, (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          reject(new Error(`HTTP ${res.statusCode}`));
+          return;
+        }
+        const ws = fs.createWriteStream(target);
+        res.pipe(ws);
+        ws.on('finish', () => resolve());
+        ws.on('error', reject);
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+    });
+    dlLog('saved', JSON.stringify(target));
+    notifySaved(target);
+    try { if (win && !win.isDestroyed()) win.webContents.send('dockfile:downloaded', target); } catch (_) {}
+    return target;
+  });
+}
+
 function setupDownloads() {
+  setupSaveBridge();
   const ses = session.defaultSession;
+  dlLog('downloads dir =', downloadDir());
   ses.on('will-download', (event, item) => {
-    const name = item.getFilename() || 'download';
-    const target = uniquePath(path.join(app.getPath('downloads'), name));
-    item.setSavePath(target);
+    let target = '';
+    try {
+      const name = decodeName(item.getFilename());
+      target = uniquePath(path.join(downloadDir(), name));
+      item.setSavePath(target);
+      dlLog('start', JSON.stringify(item.getURL()), '->', target);
+    } catch (e) {
+      dlLog('setup error:', e.message);
+    }
     item.once('done', (_e, state) => {
-      if (state !== 'completed') return;
+      let probe = '';
+      try {
+        const st = fs.statSync(target);
+        probe = `exists=true size=${st.size}`;
+      } catch (e) {
+        probe = `exists=false (${e.code}) dir=${(() => { try { return fs.readdirSync(path.dirname(target)).length; } catch (x) { return 'n/a'; } })()}`;
+      }
+      dlLog('done', state, 'savePath=' + JSON.stringify(item.getSavePath ? item.getSavePath() : ''), 'target=' + JSON.stringify(target), probe);
+      if (state !== 'completed' || !target) return;
       try {
         const n = new Notification({
           title: '下载完成',
-          body: `${name}\n${path.dirname(target)}`,
+          body: `${path.basename(target)}\n${path.dirname(target)}`,
           icon: ICON,
           silent: true,
         });
         n.on('click', () => shell.showItemInFolder(target));
         n.show();
       } catch (_) {}
-      // 让页面里的状态提示也刷新一次
-      try { win && win.webContents.send('dockfile:downloaded', target); } catch (_) {}
+      try { if (win && !win.isDestroyed()) win.webContents.send('dockfile:downloaded', target); } catch (_) {}
     });
   });
 }
@@ -118,7 +201,7 @@ function buildMenu() {
       label: '帮助',
       submenu: [
         { label: '快捷键', click: () => win && win.webContents.executeJavaScript('document.getElementById("btnHelp").click()') },
-        { label: '项目主页', click: () => shell.openExternal('https://github.com/laohuan12138/dockfile') },
+        { label: '项目主页', click: () => shell.openExternal('https://github.com/laohuan12138/docker-file-manage') },
         {
           label: `关于 dockfile ${pkg.version}`,
           click: () => dialog.showMessageBox(win, {
@@ -223,6 +306,7 @@ function createWindow(state) {
 /* ---------------- 启动 / 退出 ---------------- */
 
 async function boot() {
+  app.setAppUserModelId('io.github.laohuan12138.dockfile'); // Windows 通知/快捷方式需要
   core = createDockfileServer({
     port: 0, // 随机空闲端口，只给本窗口用
     bind: '127.0.0.1',
@@ -273,3 +357,4 @@ if (!app.requestSingleInstanceLock()) {
     app.exit(0);
   });
 }
+

@@ -12,8 +12,8 @@
   "scripts": {
     "start": "node server.js --open",
     "desktop": "node tools/start-desktop.js",
-    "dist": "electron-builder --win --x64",
-    "dist:portable": "electron-builder --win portable --x64",
+    "dist": "node tools/build-desktop.js",
+    "dist:portable": "node tools/build-desktop.js",
     "icon": "node tools/make-icon.js",
     "mock": "node tools/mock-engine.js",
     "test": "node --test test/tar.test.js test/api.test.js",
@@ -75,5 +75,6 @@
     "electron-builder": "^25.1.8"
   }
 }
+
 
 

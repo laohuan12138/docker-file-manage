@@ -450,6 +450,15 @@ function downloadUrl(entry) {
 }
 
 function triggerDownload(url, filename) {
+  // 桌面版：交给主进程用 Node 直接写盘，提示保存位置
+  if (window.dockfile && typeof window.dockfile.saveUrl === 'function') {
+    const name = filename || 'download';
+    const abs = new URL(url, location.origin).toString();
+    window.dockfile.saveUrl(abs, name)
+      .then((p) => toast(`已保存到 ${p}`, { type: 'ok', ms: 6000 }))
+      .catch((e) => toast('保存失败：' + (e && e.message ? e.message : e), { type: 'err' }));
+    return;
+  }
   const a = document.createElement('a');
   a.href = url;
   a.rel = 'noopener';

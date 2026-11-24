@@ -1,6 +1,6 @@
 # dockfile · Docker 容器文件管理器
 
-[![ci](https://github.com/laohuan12138/dockfile/actions/workflows/ci.yml/badge.svg)](https://github.com/laohuan12138/dockfile/actions/workflows/ci.yml)
+[![ci](https://github.com/laohuan12138/docker-file-manage/actions/workflows/ci.yml/badge.svg)](https://github.com/laohuan12138/docker-file-manage/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-ffb020.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%E2%89%A518-3c873a.svg)](package.json)
 
@@ -114,7 +114,7 @@ npm run dist           # 打包 → release/dockfile-<版本>-portable.exe + rel
 - **单实例**：重复双击只会聚焦已有窗口，不会起第二个服务
 - **托盘图标**：显示窗口 / 在浏览器打开 / 打开下载目录 / 退出
 - 窗口大小与位置记忆；`Ctrl+R` 刷新、`F12` 开发者工具、`Alt+F4` 退出
-- **下载**统一保存到系统「下载」文件夹（重名自动加序号），完成时弹系统通知，点击通知定位文件
+- **下载**由主进程直接写盘（不走 Chromium 下载器）：默认保存到系统「下载」文件夹，重名自动加序号，页面弹出「已保存到 …」提示并弹系统通知，点击通知定位文件；想换目录就设 `DOCKFILE_DOWNLOAD_DIR`
 - 关闭窗口即退出，并顺手清掉 WSL 里的 relay
 
 > 未做代码签名：首次运行 Windows SmartScreen 会提示，点「更多信息 → 仍要运行」即可。
@@ -288,4 +288,5 @@ test/                  tar / API / 真实引擎 / UI 四套测试
 ## License
 
 MIT
+
 
