@@ -106,8 +106,8 @@ npm run dist           # 打包 → release/dockfile-<版本>-portable.exe + rel
 
 | 文件 | 说明 |
 |---|---|
-| `dockfile-1.0.0-portable.exe` | 免安装，双击即用（约 71 MB，运行时自解压到临时目录） |
-| `dockfile-1.0.0-setup.exe` | 安装版：可选安装目录、桌面/开始菜单快捷方式、卸载项 |
+| `dockfile-<版本>-portable.exe` | 免安装，双击即用（约 71 MB，运行时自解压到临时目录） |
+| `dockfile-<版本>-setup.exe` | 安装版：可选安装目录、桌面/开始菜单快捷方式、卸载项 |
 
 桌面版比浏览器版多出来的东西：
 
@@ -288,5 +288,7 @@ test/                  tar / API / 真实引擎 / UI 四套测试
 ## License
 
 MIT
+
+
 
 

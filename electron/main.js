@@ -24,6 +24,23 @@ if (process.env.DOCKFILE_DEBUG_PORT) {
 }
 app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling');
 
+/* ---------------- 兜底：主进程异常不弹原生崩溃框 ---------------- */
+
+function crashLog(...args) {
+  try {
+    const file = path.join(app.getPath('userData'), 'crash.log');
+    fs.appendFileSync(file, `[${new Date().toISOString()}] ${args.join(' ')}\n`);
+  } catch (_) {}
+}
+
+process.on('uncaughtException', (e) => {
+  crashLog('uncaughtException:', (e && e.stack) || String(e));
+  // 桌面工具不该因为一个后台异常就中断；记日志后继续
+});
+process.on('unhandledRejection', (e) => {
+  crashLog('unhandledRejection:', (e && e.stack) || String(e));
+});
+
 let win = null;
 let tray = null;
 let core = null;
